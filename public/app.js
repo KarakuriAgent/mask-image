@@ -1,4 +1,5 @@
 import {
+  applyInpaintMaskAlpha,
   bboxFromMask,
   decodeRle,
   encodeRle,
@@ -723,6 +724,30 @@ function makeOutputCanvas() {
   return canvas;
 }
 
+function featherMaskAlpha(maskAlpha, feather) {
+  const temp = makeOutputCanvas();
+  const tempCtx = temp.getContext("2d");
+  const alpha = tempCtx.createImageData(state.width, state.height);
+  for (let i = 0; i < state.width * state.height; i += 1) {
+    const p = i * 4;
+    alpha.data[p + 3] = maskAlpha[i];
+  }
+  tempCtx.putImageData(alpha, 0, 0);
+
+  const blurred = makeOutputCanvas();
+  const blurredCtx = blurred.getContext("2d");
+  blurredCtx.filter = `blur(${feather}px)`;
+  blurredCtx.drawImage(temp, 0, 0);
+  blurredCtx.filter = "none";
+
+  const blurredData = blurredCtx.getImageData(0, 0, state.width, state.height).data;
+  const out = new Uint8ClampedArray(state.width * state.height);
+  for (let i = 0; i < out.length; i += 1) {
+    out[i] = blurredData[i * 4 + 3];
+  }
+  return out;
+}
+
 function exportInpaintMask() {
   if (!state.image) {
     setStatus("先に画像を開いてください");
@@ -742,25 +767,12 @@ function exportInpaintMask() {
     const pixels = renderInpaintPixels(state.width, state.height, instances, basePixels);
     outputCtx.putImageData(new ImageData(pixels, state.width, state.height), 0, 0);
   } else {
-    const temp = makeOutputCanvas();
-    const tempCtx = temp.getContext("2d");
     const maskAlpha = renderInpaintMaskAlpha(state.width, state.height, instances);
-    const alpha = tempCtx.createImageData(state.width, state.height);
-    for (let i = 0; i < state.width * state.height; i += 1) {
-      const p = i * 4;
-      alpha.data[p] = 0;
-      alpha.data[p + 1] = 0;
-      alpha.data[p + 2] = 0;
-      alpha.data[p + 3] = maskAlpha[i];
-    }
-    tempCtx.putImageData(alpha, 0, 0);
-    outputCtx.putImageData(new ImageData(basePixels, state.width, state.height), 0, 0);
-    outputCtx.filter = `blur(${feather}px)`;
-    outputCtx.drawImage(temp, 0, 0);
-    outputCtx.filter = "none";
+    const pixels = applyInpaintMaskAlpha(basePixels, featherMaskAlpha(maskAlpha, feather));
+    outputCtx.putImageData(new ImageData(pixels, state.width, state.height), 0, 0);
   }
   downloadCanvas(canvas, "inpaint-mask.png");
-  setStatus("インペイント用画像を書き出しました");
+  setStatus("アルファ付きインペイントPNGを書き出しました");
 }
 
 function exportRegionalMask() {

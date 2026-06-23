@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  applyInpaintMaskAlpha,
   bboxFromMask,
   decodeRle,
   encodeRle,
@@ -38,12 +39,18 @@ test("regional rendering uses white background and pure colors", () => {
   assert.deepEqual(Array.from(pixels.slice(8, 12)), [0, 0, 255, 255]);
 });
 
-test("inpaint rendering keeps base pixels and paints selected masks black", () => {
+test("inpaint rendering keeps base RGB and marks selected masks with alpha 45", () => {
   const mask = rectMask(2, 1, { x: 1, y: 0, width: 1, height: 1 });
   const base = new Uint8ClampedArray([12, 34, 56, 255, 98, 76, 54, 255]);
   const pixels = renderInpaintPixels(2, 1, [{ mask, visible: true, inpaintEnabled: true }], base);
   assert.deepEqual(Array.from(pixels.slice(0, 4)), [12, 34, 56, 255]);
-  assert.deepEqual(Array.from(pixels.slice(4, 8)), [0, 0, 0, 255]);
+  assert.deepEqual(Array.from(pixels.slice(4, 8)), [98, 76, 54, 45]);
+});
+
+test("inpaint alpha application supports feathered mask coverage", () => {
+  const base = new Uint8ClampedArray([12, 34, 56, 255, 98, 76, 54, 255, 11, 22, 33, 255]);
+  const pixels = applyInpaintMaskAlpha(base, new Uint8ClampedArray([255, 128, 0]));
+  assert.deepEqual(Array.from(pixels), [12, 34, 56, 45, 98, 76, 54, 150, 11, 22, 33, 255]);
 });
 
 test("hidden instances are excluded from inpaint and regional exports", () => {
@@ -67,7 +74,7 @@ test("none color clears lower masks in inpaint and regional exports", () => {
   const alpha = renderInpaintMaskAlpha(2, 1, instances);
   const regional = renderRegionalPixels(2, 1, instances);
   assert.deepEqual(Array.from(alpha), [255, 0]);
-  assert.deepEqual(Array.from(inpaint.slice(0, 4)), [0, 0, 0, 255]);
+  assert.deepEqual(Array.from(inpaint.slice(0, 4)), [12, 34, 56, 45]);
   assert.deepEqual(Array.from(inpaint.slice(4, 8)), [98, 76, 54, 255]);
   assert.deepEqual(Array.from(regional.slice(0, 4)), [255, 0, 0, 255]);
   assert.deepEqual(Array.from(regional.slice(4, 8)), [255, 255, 255, 255]);

@@ -5,6 +5,8 @@ export const REGIONAL_COLORS = Object.freeze({
   yellow: [255, 255, 0, 255],
 });
 
+export const INPAINT_ALPHA = 45;
+
 export function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
@@ -255,20 +257,23 @@ export function renderInpaintMaskAlpha(width, height, instances) {
   return alpha;
 }
 
+export function applyInpaintMaskAlpha(basePixels, maskAlpha) {
+  const pixels = new Uint8ClampedArray(basePixels);
+  for (let i = 0; i < maskAlpha.length; i += 1) {
+    const coverage = maskAlpha[i];
+    if (!coverage) continue;
+    const p = i * 4;
+    const amount = coverage / 255;
+    pixels[p + 3] = Math.round(pixels[p + 3] + (INPAINT_ALPHA - pixels[p + 3]) * amount);
+  }
+  return pixels;
+}
+
 export function renderInpaintPixels(width, height, instances, basePixels) {
   const base = basePixels ? new Uint8ClampedArray(basePixels) : new Uint8ClampedArray(width * height * 4);
   if (!basePixels) base.fill(255);
-  const pixels = new Uint8ClampedArray(base);
   const alpha = renderInpaintMaskAlpha(width, height, instances);
-  for (let i = 0; i < alpha.length; i += 1) {
-    if (!alpha[i]) continue;
-    const p = i * 4;
-    pixels[p] = 0;
-    pixels[p + 1] = 0;
-    pixels[p + 2] = 0;
-    pixels[p + 3] = 255;
-  }
-  return pixels;
+  return applyInpaintMaskAlpha(base, alpha);
 }
 
 export function renderRegionalPixels(width, height, instances) {

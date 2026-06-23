@@ -20,7 +20,7 @@ Local-only web app for extracting human/anime-character regions and exporting ma
 - Remove small mask islands.
 - Optional feathered inpaint export.
 - Export:
-  - Inpaint image: original image with selected regions painted black.
+  - Inpaint PNG: original RGB with selected regions marked by alpha 45.
   - Regional-ControlNet mask: white background, selected regions in pure red/blue/yellow.
 
 ## Run
