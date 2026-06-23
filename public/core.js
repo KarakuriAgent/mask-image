@@ -242,12 +242,26 @@ export function removeSmallComponents(mask, width, height, minPixels) {
   return out;
 }
 
+export function renderInpaintMaskAlpha(width, height, instances) {
+  const alpha = new Uint8ClampedArray(width * height);
+  for (const instance of instances) {
+    if (!instance.visible || !instance.mask) continue;
+    const mask = instance.mask;
+    const value = instance.inpaintEnabled !== false && instance.regionalColor !== "none" ? 255 : 0;
+    for (let i = 0; i < mask.length; i += 1) {
+      if (mask[i]) alpha[i] = value;
+    }
+  }
+  return alpha;
+}
+
 export function renderInpaintPixels(width, height, instances, basePixels) {
-  const pixels = basePixels ? new Uint8ClampedArray(basePixels) : new Uint8ClampedArray(width * height * 4);
-  if (!basePixels) pixels.fill(255);
-  const merged = mergeMasks(width, height, instances, (instance) => instance.visible && instance.inpaintEnabled);
-  for (let i = 0; i < merged.length; i += 1) {
-    if (!merged[i]) continue;
+  const base = basePixels ? new Uint8ClampedArray(basePixels) : new Uint8ClampedArray(width * height * 4);
+  if (!basePixels) base.fill(255);
+  const pixels = new Uint8ClampedArray(base);
+  const alpha = renderInpaintMaskAlpha(width, height, instances);
+  for (let i = 0; i < alpha.length; i += 1) {
+    if (!alpha[i]) continue;
     const p = i * 4;
     pixels[p] = 0;
     pixels[p + 1] = 0;
@@ -262,11 +276,18 @@ export function renderRegionalPixels(width, height, instances) {
   pixels.fill(255);
   for (const instance of instances) {
     const color = REGIONAL_COLORS[instance.regionalColor];
-    if (!instance.visible || !color) continue;
+    if (!instance.visible || !instance.mask) continue;
     const mask = instance.mask;
     for (let i = 0; i < mask.length; i += 1) {
       if (!mask[i]) continue;
       const p = i * 4;
+      if (!color) {
+        pixels[p] = 255;
+        pixels[p + 1] = 255;
+        pixels[p + 2] = 255;
+        pixels[p + 3] = 255;
+        continue;
+      }
       pixels[p] = color[0];
       pixels[p + 1] = color[1];
       pixels[p + 2] = color[2];

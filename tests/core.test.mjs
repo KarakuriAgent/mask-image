@@ -9,6 +9,7 @@ import {
   morphMask,
   rectMask,
   removeSmallComponents,
+  renderInpaintMaskAlpha,
   renderInpaintPixels,
   renderRegionalPixels,
 } from "../public/core.js";
@@ -52,6 +53,24 @@ test("hidden instances are excluded from inpaint and regional exports", () => {
   const regional = renderRegionalPixels(1, 1, [{ mask, visible: false, regionalColor: "red" }]);
   assert.deepEqual(Array.from(inpaint), [10, 20, 30, 255]);
   assert.deepEqual(Array.from(regional), [255, 255, 255, 255]);
+});
+
+test("none color clears lower masks in inpaint and regional exports", () => {
+  const lower = rectMask(2, 1, { x: 0, y: 0, width: 2, height: 1 });
+  const topNone = rectMask(2, 1, { x: 1, y: 0, width: 1, height: 1 });
+  const base = new Uint8ClampedArray([12, 34, 56, 255, 98, 76, 54, 255]);
+  const instances = [
+    { mask: lower, visible: true, inpaintEnabled: true, regionalColor: "red" },
+    { mask: topNone, visible: true, inpaintEnabled: true, regionalColor: "none" },
+  ];
+  const inpaint = renderInpaintPixels(2, 1, instances, base);
+  const alpha = renderInpaintMaskAlpha(2, 1, instances);
+  const regional = renderRegionalPixels(2, 1, instances);
+  assert.deepEqual(Array.from(alpha), [255, 0]);
+  assert.deepEqual(Array.from(inpaint.slice(0, 4)), [0, 0, 0, 255]);
+  assert.deepEqual(Array.from(inpaint.slice(4, 8)), [98, 76, 54, 255]);
+  assert.deepEqual(Array.from(regional.slice(0, 4)), [255, 0, 0, 255]);
+  assert.deepEqual(Array.from(regional.slice(4, 8)), [255, 255, 255, 255]);
 });
 
 test("morphology grows and shrinks masks", () => {

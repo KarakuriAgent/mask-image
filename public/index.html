@@ -33,12 +33,17 @@
         <aside class="left-panel">
           <div class="panel-title">マスク修正</div>
           <div class="control-group">
-            <label>操作</label>
+            <label>修正ツール</label>
             <div class="segmented main-tools">
               <button class="tool-button active" type="button" data-tool="select">選択</button>
+              <button class="tool-button" type="button" data-tool="resize">枠調整</button>
               <button class="tool-button" type="button" data-tool="brush">塗る</button>
               <button class="tool-button" type="button" data-tool="erase">消去</button>
             </div>
+          </div>
+          <div class="control-group add-person-group">
+            <label>人物を追加</label>
+            <button class="tool-button add-person-button" type="button" data-tool="box">画像上で囲む</button>
           </div>
           <div class="grid-2">
             <label>
@@ -60,10 +65,6 @@
                   <input id="threshold" type="range" min="0.05" max="0.95" step="0.05" value="0.30" />
                 </label>
                 <output id="threshold-value">0.30</output>
-              </div>
-              <div class="control-group">
-                <label>人物を追加</label>
-                <button class="tool-button full-width" type="button" data-tool="box">画像上で囲む</button>
               </div>
               <div class="grid-2">
                 <label>

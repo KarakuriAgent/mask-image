@@ -8,6 +8,7 @@ import {
   paintCircle,
   rectMask,
   removeSmallComponents,
+  renderInpaintMaskAlpha,
   renderInpaintPixels,
   renderRegionalPixels,
 } from "./core.js";
@@ -52,6 +53,8 @@ const state = {
   pointerDown: false,
   boxStart: null,
   boxCurrent: null,
+  adjustBox: null,
+  resizeDrag: null,
   undoStack: [],
   redoStack: [],
 };
@@ -72,11 +75,11 @@ function setStatus(message) {
   dom.status.textContent = message;
 }
 
-function setDetecting(isDetecting) {
+function setDetecting(isDetecting, label = "検出中") {
   dom.detectButton.disabled = isDetecting;
   dom.detectButton.classList.toggle("is-loading", isDetecting);
   dom.detectButton.setAttribute("aria-busy", isDetecting ? "true" : "false");
-  dom.detectLabel.textContent = isDetecting ? "検出中" : "人物を検出";
+  dom.detectLabel.textContent = isDetecting ? label : "人物を検出";
 }
 
 function selectedInstance() {
@@ -115,6 +118,8 @@ function restoreAppState(snapshot) {
   if (state.selectedId && !state.instances.some((instance) => instance.id === state.selectedId)) {
     state.selectedId = state.instances[0]?.id || null;
   }
+  state.resizeDrag = null;
+  state.adjustBox = state.tool === "resize" && selectedInstance() ? { ...selectedInstance().bbox } : null;
   renderList();
   redraw();
 }
@@ -143,7 +148,7 @@ function hasMaskPixels(instance) {
 }
 
 function hasInpaintTargets() {
-  return state.instances.some((instance) => instance.visible && hasMaskPixels(instance));
+  return state.instances.some((instance) => instance.visible && instance.regionalColor !== "none" && hasMaskPixels(instance));
 }
 
 function hasRegionalTargets() {
@@ -178,12 +183,18 @@ function inpaintRenderInstances() {
   return state.instances.map((instance) => ({ ...instance, inpaintEnabled: true }));
 }
 
-function canvasPoint(event) {
+function canvasEventPoint(event) {
   const rect = dom.canvas.getBoundingClientRect();
   const scaleX = dom.canvas.width / rect.width;
   const scaleY = dom.canvas.height / rect.height;
-  const canvasX = (event.clientX - rect.left) * scaleX;
-  const canvasY = (event.clientY - rect.top) * scaleY;
+  return {
+    x: (event.clientX - rect.left) * scaleX,
+    y: (event.clientY - rect.top) * scaleY,
+  };
+}
+
+function canvasPoint(event) {
+  const { x: canvasX, y: canvasY } = canvasEventPoint(event);
   const x = (canvasX - state.view.x) / state.view.scale;
   const y = (canvasY - state.view.y) / state.view.scale;
   return {
@@ -224,26 +235,131 @@ function updateView() {
   };
 }
 
-function overlayForInstance(instance) {
+function boxToCanvasRect(box) {
+  const { x, y, scale } = state.view;
+  return {
+    x: x + box.x * scale,
+    y: y + box.y * scale,
+    width: box.width * scale,
+    height: box.height * scale,
+  };
+}
+
+function currentAdjustBox() {
+  const instance = selectedInstance();
+  if (!instance) return null;
+  if (!state.adjustBox) state.adjustBox = { ...instance.bbox };
+  return state.adjustBox;
+}
+
+function confirmButtonRect(box) {
+  const rect = boxToCanvasRect(box);
+  const dpr = window.devicePixelRatio || 1;
+  const size = 30 * dpr;
+  const gap = 6 * dpr;
+  return {
+    x: Math.min(dom.canvas.width - size - gap, Math.max(gap, rect.x + rect.width - size)),
+    y: Math.max(gap, rect.y - size - gap),
+    width: size,
+    height: size,
+  };
+}
+
+function resizeHandles(box) {
+  const rect = boxToCanvasRect(box);
+  return [
+    { name: "nw", x: rect.x, y: rect.y },
+    { name: "ne", x: rect.x + rect.width, y: rect.y },
+    { name: "sw", x: rect.x, y: rect.y + rect.height },
+    { name: "se", x: rect.x + rect.width, y: rect.y + rect.height },
+  ];
+}
+
+function pointInRect(point, rect) {
+  return point.x >= rect.x && point.x <= rect.x + rect.width && point.y >= rect.y && point.y <= rect.y + rect.height;
+}
+
+function hitResizeControl(canvasPointValue, box) {
+  if (pointInRect(canvasPointValue, confirmButtonRect(box))) return { type: "confirm" };
+  const dpr = window.devicePixelRatio || 1;
+  const radius = 9 * dpr;
+  for (const handle of resizeHandles(box)) {
+    if (Math.abs(canvasPointValue.x - handle.x) <= radius && Math.abs(canvasPointValue.y - handle.y) <= radius) {
+      return { type: "handle", handle: handle.name };
+    }
+  }
+  if (pointInRect(canvasPointValue, boxToCanvasRect(box))) return { type: "move" };
+  return null;
+}
+
+function boxFromCorners(x1, y1, x2, y2) {
+  const left = Math.max(0, Math.min(state.width, Math.min(x1, x2)));
+  const top = Math.max(0, Math.min(state.height, Math.min(y1, y2)));
+  const right = Math.max(0, Math.min(state.width, Math.max(x1, x2)));
+  const bottom = Math.max(0, Math.min(state.height, Math.max(y1, y2)));
+  return {
+    x: left,
+    y: top,
+    width: Math.max(0, right - left),
+    height: Math.max(0, bottom - top),
+  };
+}
+
+function resizedBoxFromDrag(point) {
+  const drag = state.resizeDrag;
+  if (!drag) return state.adjustBox;
+  const start = drag.startBox;
+  if (drag.handle === "move") {
+    const dx = point.x - drag.startPoint.x;
+    const dy = point.y - drag.startPoint.y;
+    return {
+      x: Math.max(0, Math.min(state.width - start.width, start.x + dx)),
+      y: Math.max(0, Math.min(state.height - start.height, start.y + dy)),
+      width: start.width,
+      height: start.height,
+    };
+  }
+  let x1 = start.x;
+  let y1 = start.y;
+  let x2 = start.x + start.width;
+  let y2 = start.y + start.height;
+  if (drag.handle.includes("n")) y1 = point.y;
+  if (drag.handle.includes("s")) y2 = point.y;
+  if (drag.handle.includes("w")) x1 = point.x;
+  if (drag.handle.includes("e")) x2 = point.x;
+  return boxFromCorners(x1, y1, x2, y2);
+}
+
+function overlayColorForInstance(instance) {
+  if (instance.regionalColor === "none") return null;
+  if (state.outputMode !== "regional") return [37, 99, 235];
+  if (instance.regionalColor === "red") return [255, 0, 0];
+  if (instance.regionalColor === "blue") return [0, 0, 255];
+  if (instance.regionalColor === "yellow") return [210, 168, 0];
+  return [102, 112, 133];
+}
+
+function overlayForInstances() {
   const overlay = document.createElement("canvas");
   overlay.width = state.width;
   overlay.height = state.height;
   const overlayCtx = overlay.getContext("2d");
   const image = overlayCtx.createImageData(state.width, state.height);
-  let color = [37, 99, 235];
-  if (state.outputMode === "regional") {
-    color = [102, 112, 133];
-    if (instance.regionalColor === "red") color = [255, 0, 0];
-    if (instance.regionalColor === "blue") color = [0, 0, 255];
-    if (instance.regionalColor === "yellow") color = [210, 168, 0];
-  }
-  for (let i = 0; i < instance.mask.length; i += 1) {
-    if (!instance.mask[i]) continue;
-    const p = i * 4;
-    image.data[p] = color[0];
-    image.data[p + 1] = color[1];
-    image.data[p + 2] = color[2];
-    image.data[p + 3] = instance.id === state.selectedId ? 120 : 72;
+  for (const instance of state.instances) {
+    if (!instance.visible) continue;
+    const color = overlayColorForInstance(instance);
+    for (let i = 0; i < instance.mask.length; i += 1) {
+      if (!instance.mask[i]) continue;
+      const p = i * 4;
+      if (!color) {
+        image.data[p + 3] = 0;
+        continue;
+      }
+      image.data[p] = color[0];
+      image.data[p + 1] = color[1];
+      image.data[p + 2] = color[2];
+      image.data[p + 3] = instance.id === state.selectedId ? 120 : 72;
+    }
   }
   overlayCtx.putImageData(image, 0, 0);
   return overlay;
@@ -272,11 +388,8 @@ function redraw() {
   ctx.fillRect(state.view.x, state.view.y, state.view.width, state.view.height);
   ctx.drawImage(state.image, state.view.x, state.view.y, state.view.width, state.view.height);
 
-  for (const instance of state.instances) {
-    if (!instance.visible) continue;
-    const overlay = overlayForInstance(instance);
-    ctx.drawImage(overlay, state.view.x, state.view.y, state.view.width, state.view.height);
-  }
+  const overlay = overlayForInstances();
+  ctx.drawImage(overlay, state.view.x, state.view.y, state.view.width, state.view.height);
 
   for (const instance of state.instances) {
     if (!instance.visible) continue;
@@ -290,6 +403,41 @@ function redraw() {
     const height = Math.abs(state.boxCurrent.y - state.boxStart.y);
     drawBox({ x, y, width, height }, "#b42318", 2);
   }
+
+  if (state.tool === "resize") drawResizeControls();
+}
+
+function drawResizeControls() {
+  const box = currentAdjustBox();
+  if (!box) return;
+  const rect = boxToCanvasRect(box);
+  const dpr = window.devicePixelRatio || 1;
+  ctx.save();
+  ctx.strokeStyle = "#2563eb";
+  ctx.lineWidth = 3 * dpr;
+  ctx.setLineDash([7 * dpr, 5 * dpr]);
+  ctx.strokeRect(rect.x, rect.y, rect.width, rect.height);
+  ctx.setLineDash([]);
+  for (const handle of resizeHandles(box)) {
+    const size = 12 * dpr;
+    ctx.fillStyle = "#ffffff";
+    ctx.strokeStyle = "#2563eb";
+    ctx.lineWidth = 2 * dpr;
+    ctx.fillRect(handle.x - size / 2, handle.y - size / 2, size, size);
+    ctx.strokeRect(handle.x - size / 2, handle.y - size / 2, size, size);
+  }
+  const confirm = confirmButtonRect(box);
+  ctx.fillStyle = "#16a34a";
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 2 * dpr;
+  ctx.fillRect(confirm.x, confirm.y, confirm.width, confirm.height);
+  ctx.strokeRect(confirm.x, confirm.y, confirm.width, confirm.height);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = `${20 * dpr}px sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText("✓", confirm.x + confirm.width / 2, confirm.y + confirm.height / 2);
+  ctx.restore();
 }
 
 function instanceFromPayload(item, index, options = {}) {
@@ -389,6 +537,8 @@ async function loadImageFromFile(file) {
   state.height = image.naturalHeight;
   state.instances = [];
   state.selectedId = null;
+  state.adjustBox = null;
+  state.resizeDrag = null;
   clearHistory();
   renderList();
   setStatus(`画像を読み込みました: ${state.width}x${state.height}`);
@@ -436,6 +586,8 @@ async function detect() {
     });
     state.instances = next;
     state.selectedId = next[0]?.id || null;
+    state.adjustBox = null;
+    state.resizeDrag = null;
     clearHistory();
     renderList();
     redraw();
@@ -459,6 +611,7 @@ async function segmentBox(box) {
     return;
   }
   setStatus("囲んだ範囲をマスク化しています...");
+  setDetecting(true, "追加中");
   try {
     const data = await postJson("/api/segment-box", {
       imageDataUrl: state.imageDataUrl,
@@ -483,6 +636,53 @@ async function segmentBox(box) {
       regionalColor: defaultRegionalColor(state.instances.length),
     });
     setStatus("バックエンドが利用できないため、四角形マスクを追加しました。");
+  } finally {
+    setDetecting(false);
+  }
+}
+
+async function replaceSelectedWithBox(box) {
+  const instance = selectedInstance();
+  if (!instance) {
+    setStatus("先に人物を選択してください");
+    return;
+  }
+  if (box.width < 4 || box.height < 4) {
+    setStatus("囲んだ範囲が小さすぎます");
+    return;
+  }
+  setTool("select");
+  redraw();
+  setStatus("調整した枠でマスクを作り直しています...");
+  setDetecting(true, "更新中");
+  try {
+    const data = await postJson("/api/segment-box", {
+      imageDataUrl: state.imageDataUrl,
+      width: state.width,
+      height: state.height,
+      box,
+    });
+    const index = state.instances.findIndex((item) => item.id === instance.id);
+    const next = instanceFromPayload(data.instance, Math.max(0, index));
+    pushAppHistory();
+    instance.bbox = next.bbox;
+    instance.mask = next.mask;
+    instance.score = next.score;
+    renderList();
+    redraw();
+    setStatus("マスクを更新しました");
+  } catch (error) {
+    console.error(error);
+    const mask = defaultExpandedMask(rectMask(state.width, state.height, box));
+    pushAppHistory();
+    instance.bbox = bboxFromMask(mask, state.width, state.height);
+    instance.mask = mask;
+    instance.score = null;
+    renderList();
+    redraw();
+    setStatus("バックエンドが利用できないため、四角形マスクで更新しました。");
+  } finally {
+    setDetecting(false);
   }
 }
 
@@ -544,15 +744,14 @@ function exportInpaintMask() {
   } else {
     const temp = makeOutputCanvas();
     const tempCtx = temp.getContext("2d");
-    const exact = renderInpaintPixels(state.width, state.height, instances, basePixels);
+    const maskAlpha = renderInpaintMaskAlpha(state.width, state.height, instances);
     const alpha = tempCtx.createImageData(state.width, state.height);
     for (let i = 0; i < state.width * state.height; i += 1) {
       const p = i * 4;
-      const isBlack = exact[p] === 0;
       alpha.data[p] = 0;
       alpha.data[p + 1] = 0;
       alpha.data[p + 2] = 0;
-      alpha.data[p + 3] = isBlack ? 255 : 0;
+      alpha.data[p + 3] = maskAlpha[i];
     }
     tempCtx.putImageData(alpha, 0, 0);
     outputCtx.putImageData(new ImageData(basePixels, state.width, state.height), 0, 0);
@@ -582,9 +781,23 @@ function exportRegionalMask() {
 }
 
 function setTool(tool) {
+  if (tool === "resize" && !selectedInstance()) {
+    setStatus("先に右側の人物を選択してください");
+    tool = "select";
+  }
   state.tool = tool;
+  state.resizeDrag = null;
+  state.adjustBox = tool === "resize" ? { ...selectedInstance().bbox } : null;
   for (const button of dom.toolButtons) {
     button.classList.toggle("active", button.dataset.tool === tool);
+  }
+  if (tool === "box") setStatus("追加したい人物を画像上で囲んでください");
+  if (tool === "resize") setStatus("枠をドラッグして調整し、✓でマスクを更新します");
+}
+
+function releaseCanvasPointer(event) {
+  if (dom.canvas.releasePointerCapture && dom.canvas.hasPointerCapture?.(event.pointerId)) {
+    dom.canvas.releasePointerCapture(event.pointerId);
   }
 }
 
@@ -596,6 +809,33 @@ function onPointerDown(event) {
   }
   state.pointerDown = true;
   const point = canvasPoint(event);
+  if (state.tool === "resize") {
+    const box = currentAdjustBox();
+    if (!box) {
+      state.pointerDown = false;
+      releaseCanvasPointer(event);
+      setStatus("先に人物を選択してください");
+      return;
+    }
+    const hit = hitResizeControl(canvasEventPoint(event), box);
+    if (hit?.type === "confirm") {
+      state.pointerDown = false;
+      releaseCanvasPointer(event);
+      replaceSelectedWithBox(box);
+      return;
+    }
+    if (hit?.type === "handle" || hit?.type === "move") {
+      state.resizeDrag = {
+        handle: hit.type === "move" ? "move" : hit.handle,
+        startPoint: point,
+        startBox: { ...box },
+      };
+      return;
+    }
+    state.pointerDown = false;
+    releaseCanvasPointer(event);
+    return;
+  }
   if (state.tool === "select") {
     state.selectedId = hitTestInstances(state.instances, point.x, point.y, state.width);
     renderList();
@@ -619,6 +859,12 @@ function onPointerMove(event) {
   if (!state.pointerDown || !state.image) return;
   event.preventDefault();
   const point = canvasPoint(event);
+  if (state.tool === "resize") {
+    if (!state.resizeDrag) return;
+    state.adjustBox = resizedBoxFromDrag(point);
+    redraw();
+    return;
+  }
   if (state.tool === "box") {
     state.boxCurrent = point;
     redraw();
@@ -637,6 +883,12 @@ function onPointerUp(event) {
   if (!state.pointerDown) return;
   event.preventDefault();
   state.pointerDown = false;
+  if (state.tool === "resize") {
+    state.resizeDrag = null;
+    redraw();
+    releaseCanvasPointer(event);
+    return;
+  }
   if (state.tool === "box" && state.boxStart && state.boxCurrent) {
     const box = {
       x: Math.min(state.boxStart.x, state.boxCurrent.x),
@@ -649,9 +901,7 @@ function onPointerUp(event) {
     redraw();
     segmentBox(box);
   }
-  if (dom.canvas.releasePointerCapture && dom.canvas.hasPointerCapture?.(event.pointerId)) {
-    dom.canvas.releasePointerCapture(event.pointerId);
-  }
+  releaseCanvasPointer(event);
 }
 
 function moveInstance(id, delta) {
@@ -716,7 +966,10 @@ dom.instanceList.addEventListener("change", (event) => {
   const instance = state.instances.find((item) => item.id === card.dataset.id);
   if (!instance) return;
   const action = event.target.dataset.action;
-  if (action === "select") state.selectedId = instance.id;
+  if (action === "select") {
+    state.selectedId = instance.id;
+    if (state.tool === "resize") setTool("select");
+  }
   if (action === "visibility" && instance.visible !== event.target.checked) {
     pushAppHistory();
     instance.visible = event.target.checked;
@@ -740,6 +993,7 @@ dom.instanceList.addEventListener("click", (event) => {
     pushAppHistory();
     state.instances = state.instances.filter((item) => item.id !== id);
     if (state.selectedId === id) state.selectedId = state.instances[0]?.id || null;
+    if (state.tool === "resize") setTool("select");
   }
   if (action === "up" || action === "down") {
     const delta = action === "up" ? -1 : 1;
