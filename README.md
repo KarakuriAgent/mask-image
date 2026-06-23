@@ -1,5 +1,7 @@
 # Mask Image
 
+[日本語版](README.ja.md)
+
 Local-only web app for extracting human/anime-character regions and exporting masks for inpainting and Regional-ControlNet.
 
 ## Features
