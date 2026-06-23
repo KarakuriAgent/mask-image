@@ -1,0 +1,6 @@
+pillow
+numpy
+transformers
+huggingface_hub
+accelerate
+git+https://github.com/facebookresearch/sam2.git

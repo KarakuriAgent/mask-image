@@ -1,0 +1,13 @@
+{
+  "name": "mask-image",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test tests/*.test.mjs && python3 -m unittest discover -s tests -p 'test_*.py'",
+    "serve": "bash scripts/run_server.sh --host 0.0.0.0 --port 8787",
+    "setup:ml:cpu": "bash scripts/setup_ml_cpu.sh",
+    "setup:ml:cuda": "bash scripts/setup_ml_cuda.sh"
+  }
+}

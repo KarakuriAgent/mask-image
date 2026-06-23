@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>画像マスク作成</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="topbar">
+        <div class="brand">画像マスク作成</div>
+        <label class="file-button">
+          <input id="file-input" type="file" accept="image/*" />
+          画像を開く
+        </label>
+        <button id="detect-button" type="button">
+          <span class="spinner" aria-hidden="true"></span>
+          <span class="detect-label">検出</span>
+        </button>
+        <div class="mode-switch" role="group" aria-label="出力モード">
+          <span class="mode-label">出力モード</span>
+          <button class="mode-button active" type="button" data-output-mode="inpaint">インペイント</button>
+          <button class="mode-button" type="button" data-output-mode="regional">領域カラー</button>
+        </div>
+        <button id="export-button" type="button">インペイントを書き出し</button>
+        <span id="status" class="status">準備完了</span>
+      </header>
+
+      <section class="workspace">
+        <aside class="left-panel">
+          <div class="control-group">
+            <label for="prompts">検出したい対象</label>
+            <textarea id="prompts" rows="3">アニメキャラクター . 人物 . 人体 . 全身</textarea>
+          </div>
+          <div class="grid-2">
+            <label>
+              検出のしきい値
+              <input id="threshold" type="range" min="0.05" max="0.95" step="0.05" value="0.30" />
+            </label>
+            <output id="threshold-value">0.30</output>
+          </div>
+          <div class="control-group">
+            <label>編集ツール</label>
+            <div class="segmented">
+              <button class="tool-button active" type="button" data-tool="select">選択</button>
+              <button class="tool-button" type="button" data-tool="box">囲む</button>
+              <button class="tool-button" type="button" data-tool="brush">塗る</button>
+              <button class="tool-button" type="button" data-tool="erase">消す</button>
+            </div>
+          </div>
+          <div class="grid-2">
+            <label>
+              ブラシサイズ
+              <input id="brush-size" type="range" min="2" max="96" step="1" value="24" />
+            </label>
+            <output id="brush-value">24</output>
+          </div>
+          <div class="grid-2">
+            <label>
+              小さいゴミの除去
+              <input id="clean-min" type="number" min="1" max="1000000" step="10" value="160" />
+            </label>
+            <button id="clean-mask" type="button">除去</button>
+          </div>
+          <div class="button-row">
+            <button id="grow-mask" type="button">広げる</button>
+            <button id="shrink-mask" type="button">縮める</button>
+            <button id="clear-mask" type="button">空にする</button>
+          </div>
+          <div class="grid-2 inpaint-only">
+            <label>
+              インペイント境界ぼかし
+              <input id="feather" type="range" min="0" max="32" step="1" value="0" />
+            </label>
+            <output id="feather-value">0</output>
+          </div>
+          <div class="hint">
+            見落とされた人物は「囲む」で追加できます。選択中のマスクは「塗る」「消す」で手直しできます。
+          </div>
+        </aside>
+
+        <section class="canvas-panel">
+          <canvas id="main-canvas" aria-label="画像編集キャンバス"></canvas>
+        </section>
+
+        <aside class="right-panel">
+          <div class="panel-title">検出した領域</div>
+          <div id="instance-list" class="instance-list"></div>
+        </aside>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
