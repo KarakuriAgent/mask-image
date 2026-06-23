@@ -3,6 +3,7 @@ import {
   decodeRle,
   encodeRle,
   hitTestInstances,
+  mergeDuplicateInstances,
   morphMask,
   paintCircle,
   rectMask,
@@ -16,6 +17,7 @@ const dom = {
   detectButton: document.querySelector("#detect-button"),
   detectLabel: document.querySelector("#detect-button .detect-label"),
   exportButton: document.querySelector("#export-button"),
+  exportRegionalButton: document.querySelector("#export-regional-button"),
   status: document.querySelector("#status"),
   prompts: document.querySelector("#prompts"),
   threshold: document.querySelector("#threshold"),
@@ -29,10 +31,11 @@ const dom = {
   growMask: document.querySelector("#grow-mask"),
   shrinkMask: document.querySelector("#shrink-mask"),
   clearMask: document.querySelector("#clear-mask"),
+  undoAction: document.querySelector("#undo-action"),
+  redoAction: document.querySelector("#redo-action"),
   canvas: document.querySelector("#main-canvas"),
   instanceList: document.querySelector("#instance-list"),
   toolButtons: Array.from(document.querySelectorAll(".tool-button")),
-  outputModeButtons: Array.from(document.querySelectorAll(".mode-button")),
 };
 
 const ctx = dom.canvas.getContext("2d", { alpha: false });
@@ -43,20 +46,27 @@ const state = {
   height: 0,
   instances: [],
   selectedId: null,
-  outputMode: "inpaint",
+  outputMode: "regional",
   tool: "select",
   view: { x: 0, y: 0, width: 1, height: 1, scale: 1 },
   pointerDown: false,
   boxStart: null,
   boxCurrent: null,
+  undoStack: [],
+  redoStack: [],
 };
 
 const regionalColorLabels = {
-  none: "出力しない",
-  red: "赤で出力",
-  blue: "青で出力",
-  yellow: "黄で出力",
+  none: "色なし",
+  red: "赤",
+  blue: "青",
+  yellow: "黄",
 };
+
+const defaultRegionalColors = ["red", "blue", "yellow"];
+const maxHistoryEntries = 40;
+const defaultMaskGrowthMin = 10;
+const defaultMaskGrowthMax = 28;
 
 function setStatus(message) {
   dom.status.textContent = message;
@@ -66,11 +76,66 @@ function setDetecting(isDetecting) {
   dom.detectButton.disabled = isDetecting;
   dom.detectButton.classList.toggle("is-loading", isDetecting);
   dom.detectButton.setAttribute("aria-busy", isDetecting ? "true" : "false");
-  dom.detectLabel.textContent = isDetecting ? "検出中" : "検出";
+  dom.detectLabel.textContent = isDetecting ? "検出中" : "人物を検出";
 }
 
 function selectedInstance() {
   return state.instances.find((instance) => instance.id === state.selectedId) || null;
+}
+
+function updateHistoryButtons() {
+  dom.undoAction.disabled = state.undoStack.length === 0;
+  dom.redoAction.disabled = state.redoStack.length === 0;
+}
+
+function clearHistory() {
+  state.undoStack = [];
+  state.redoStack = [];
+  updateHistoryButtons();
+}
+
+function cloneInstance(instance) {
+  return {
+    ...instance,
+    bbox: { ...instance.bbox },
+    mask: instance.mask.slice(),
+  };
+}
+
+function snapshotAppState() {
+  return {
+    instances: state.instances.map(cloneInstance),
+    selectedId: state.selectedId,
+  };
+}
+
+function restoreAppState(snapshot) {
+  state.instances = snapshot.instances.map(cloneInstance);
+  state.selectedId = snapshot.selectedId;
+  if (state.selectedId && !state.instances.some((instance) => instance.id === state.selectedId)) {
+    state.selectedId = state.instances[0]?.id || null;
+  }
+  renderList();
+  redraw();
+}
+
+function pushAppHistory() {
+  state.undoStack.push(snapshotAppState());
+  if (state.undoStack.length > maxHistoryEntries) state.undoStack.shift();
+  state.redoStack = [];
+  updateHistoryButtons();
+}
+
+function restoreHistory(fromStack, toStack, emptyMessage) {
+  const snapshot = fromStack.pop();
+  if (!snapshot) {
+    setStatus(emptyMessage);
+    updateHistoryButtons();
+    return;
+  }
+  toStack.push(snapshotAppState());
+  restoreAppState(snapshot);
+  updateHistoryButtons();
 }
 
 function hasMaskPixels(instance) {
@@ -87,6 +152,26 @@ function hasRegionalTargets() {
 
 function makeId(prefix = "inst") {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function defaultRegionalColor(index) {
+  return defaultRegionalColors[index % defaultRegionalColors.length];
+}
+
+function defaultMaskGrowthRadius() {
+  const imageSize = Math.max(state.width, state.height);
+  if (!imageSize) return defaultMaskGrowthMin;
+  return Math.max(defaultMaskGrowthMin, Math.min(defaultMaskGrowthMax, Math.round(imageSize / 120)));
+}
+
+function defaultExpandedMask(mask) {
+  return morphMask(mask, state.width, state.height, defaultMaskGrowthRadius(), "dilate");
+}
+
+function applyDefaultMaskExpansion(instance) {
+  instance.mask = defaultExpandedMask(instance.mask);
+  instance.bbox = bboxFromMask(instance.mask, state.width, state.height);
+  return instance;
 }
 
 function inpaintRenderInstances() {
@@ -205,24 +290,26 @@ function redraw() {
   }
 }
 
-function instanceFromPayload(item, index) {
-  const mask = item.mask?.counts
+function instanceFromPayload(item, index, options = {}) {
+  const rawMask = item.mask?.counts
     ? decodeRle(item.mask, state.width, state.height)
     : rectMask(state.width, state.height, item.bbox);
-  const bbox = item.bbox && item.bbox.width > 0 ? item.bbox : bboxFromMask(mask, state.width, state.height);
+  const mask = options.expand === false ? rawMask : defaultExpandedMask(rawMask);
+  const bbox = bboxFromMask(mask, state.width, state.height);
   return {
     id: item.id || makeId("det"),
-    label: item.id?.startsWith("manual") ? `手動領域 ${index + 1}` : `検出領域 ${index + 1}`,
+    label: `人物 ${index + 1}`,
     score: typeof item.score === "number" ? item.score : null,
     bbox,
     mask,
     visible: true,
     inpaintEnabled: true,
-    regionalColor: "none",
+    regionalColor: defaultRegionalColor(index),
   };
 }
 
 function addInstance(instance) {
+  pushAppHistory();
   state.instances.push(instance);
   state.selectedId = instance.id;
   renderList();
@@ -231,42 +318,42 @@ function addInstance(instance) {
 
 function renderList() {
   if (!state.instances.length) {
-    dom.instanceList.innerHTML = '<div class="empty-state">まだ領域がありません。検出するか、画像上で囲んで追加してください。</div>';
+    dom.instanceList.innerHTML = '<div class="empty-state">画像を開いて人物を検出してください。</div>';
     return;
   }
   dom.instanceList.innerHTML = state.instances
     .map((instance, index) => {
       const score = instance.score == null ? "" : `<span class="score">${Math.round(instance.score * 100)}%</span>`;
-      const modeControl = state.outputMode === "inpaint"
-        ? `
-          <div class="instance-mode-row ${instance.visible ? "" : "muted"}">
-            <span>インペイント</span>
-            <strong>${instance.visible ? "書き出す" : "非表示"}</strong>
-          </div>
-        `
-        : `
-          <label class="instance-mode-row">
-            <span>領域カラー</span>
-            <select data-action="regional" aria-label="領域カラー">
-              ${["none", "red", "blue", "yellow"].map((color) => `<option value="${color}" ${instance.regionalColor === color ? "selected" : ""}>${regionalColorLabels[color]}</option>`).join("")}
-            </select>
-          </label>
-        `;
       return `
-        <article class="instance-card ${instance.id === state.selectedId ? "selected" : ""}" data-id="${instance.id}">
-          <div class="instance-head">
+        <article class="instance-card ${instance.id === state.selectedId ? "selected" : ""} ${instance.visible ? "" : "muted"}" data-id="${instance.id}">
+          <label class="instance-head">
             <input type="radio" name="selected-instance" ${instance.id === state.selectedId ? "checked" : ""} data-action="select" />
-            <div class="instance-name">${escapeHtml(instance.label || `領域 ${index + 1}`)}</div>
+            <span class="instance-name">${escapeHtml(instance.label || `人物 ${index + 1}`)}</span>
             ${score}
+          </label>
+          <div class="instance-mode-control">
+            <label class="instance-mode-row compact">
+              <span>出力</span>
+              <input type="checkbox" ${instance.visible ? "checked" : ""} data-action="visibility" aria-label="出力" />
+            </label>
+            <label class="instance-mode-row">
+              <span>色</span>
+              <select data-action="regional" aria-label="色">
+                ${["none", "red", "blue", "yellow"].map((color) => `<option value="${color}" ${instance.regionalColor === color ? "selected" : ""}>${regionalColorLabels[color]}</option>`).join("")}
+              </select>
+            </label>
           </div>
-          <div class="instance-mode-control">${modeControl}</div>
-          <div class="instance-actions">
-            <button type="button" title="表示を切り替え" data-action="visibility">${instance.visible ? "非表示" : "表示"}</button>
-            <button type="button" title="上へ移動" data-action="up">上</button>
-            <button type="button" title="下へ移動" data-action="down">下</button>
-            <button type="button" title="現在のマスクから枠を更新" data-action="rebox">枠更新</button>
+          <div class="instance-primary-actions">
             <button type="button" title="削除" data-action="delete">削除</button>
           </div>
+          <details class="instance-details">
+            <summary>詳細</summary>
+            <div class="instance-actions">
+              <button type="button" title="上へ移動" data-action="up">上へ</button>
+              <button type="button" title="下へ移動" data-action="down">下へ</button>
+              <button type="button" title="現在のマスクから枠を更新" data-action="rebox">枠更新</button>
+            </div>
+          </details>
         </article>
       `;
     })
@@ -300,6 +387,7 @@ async function loadImageFromFile(file) {
   state.height = image.naturalHeight;
   state.instances = [];
   state.selectedId = null;
+  clearHistory();
   renderList();
   setStatus(`画像を読み込みました: ${state.width}x${state.height}`);
   redraw();
@@ -337,12 +425,24 @@ async function detect() {
       setStatus("自動検出は利用できません。必要な環境を確認してください。");
       return;
     }
-    const next = (data.instances || []).map(instanceFromPayload);
+    const detected = (data.instances || []).map((item, index) => instanceFromPayload(item, index, { expand: false }));
+    const next = mergeDuplicateInstances(detected, state.width, state.height);
+    next.forEach((instance, index) => {
+      applyDefaultMaskExpansion(instance);
+      if (instance.id?.startsWith("det")) instance.label = `人物 ${index + 1}`;
+      instance.regionalColor = defaultRegionalColor(index);
+    });
     state.instances = next;
     state.selectedId = next[0]?.id || null;
+    clearHistory();
     renderList();
     redraw();
-    setStatus(next.length ? `${next.length}件検出しました` : "検出できませんでした。手動で囲んで追加してください。");
+    const mergedCount = detected.length - next.length;
+    if (next.length && mergedCount > 0) {
+      setStatus(`${detected.length}件検出し、重複をまとめて${next.length}領域にしました`);
+    } else {
+      setStatus(next.length ? `${next.length}件検出しました` : "検出できませんでした。手動で囲んで追加してください。");
+    }
   } catch (error) {
     console.error(error);
     setStatus("検出に失敗しました。");
@@ -369,15 +469,16 @@ async function segmentBox(box) {
   } catch (error) {
     console.error(error);
     const mask = rectMask(state.width, state.height, box);
+    const expandedMask = defaultExpandedMask(mask);
     addInstance({
       id: makeId("box"),
-      label: `手動領域 ${state.instances.length + 1}`,
+      label: `人物 ${state.instances.length + 1}`,
       score: null,
-      bbox: box,
-      mask,
+      bbox: bboxFromMask(expandedMask, state.width, state.height),
+      mask: expandedMask,
       visible: true,
       inpaintEnabled: true,
-      regionalColor: "none",
+      regionalColor: defaultRegionalColor(state.instances.length),
     });
     setStatus("バックエンドが利用できないため、四角形マスクを追加しました。");
   }
@@ -389,6 +490,7 @@ function mutateSelectedMask(callback) {
     setStatus("先に領域を選択してください");
     return;
   }
+  pushAppHistory();
   callback(instance);
   instance.bbox = bboxFromMask(instance.mask, state.width, state.height);
   renderList();
@@ -477,30 +579,11 @@ function exportRegionalMask() {
   setStatus("領域カラー画像を書き出しました");
 }
 
-function exportCurrentMode() {
-  if (state.outputMode === "regional") {
-    exportRegionalMask();
-    return;
-  }
-  exportInpaintMask();
-}
-
 function setTool(tool) {
   state.tool = tool;
   for (const button of dom.toolButtons) {
     button.classList.toggle("active", button.dataset.tool === tool);
   }
-}
-
-function setOutputMode(mode) {
-  state.outputMode = mode;
-  document.body.dataset.outputMode = mode;
-  for (const button of dom.outputModeButtons) {
-    button.classList.toggle("active", button.dataset.outputMode === mode);
-  }
-  dom.exportButton.textContent = mode === "regional" ? "領域カラーを書き出し" : "インペイントを書き出し";
-  renderList();
-  redraw();
 }
 
 function onPointerDown(event) {
@@ -578,7 +661,8 @@ dom.fileInput.addEventListener("change", (event) => {
   });
 });
 dom.detectButton.addEventListener("click", detect);
-dom.exportButton.addEventListener("click", exportCurrentMode);
+dom.exportButton.addEventListener("click", exportInpaintMask);
+dom.exportRegionalButton.addEventListener("click", exportRegionalMask);
 dom.threshold.addEventListener("input", () => {
   dom.thresholdValue.value = Number(dom.threshold.value).toFixed(2);
 });
@@ -591,13 +675,16 @@ dom.feather.addEventListener("input", () => {
 for (const button of dom.toolButtons) {
   button.addEventListener("click", () => setTool(button.dataset.tool));
 }
-for (const button of dom.outputModeButtons) {
-  button.addEventListener("click", () => setOutputMode(button.dataset.outputMode));
-}
 dom.cleanMask.addEventListener("click", () => {
   mutateSelectedMask((instance) => {
     instance.mask = removeSmallComponents(instance.mask, state.width, state.height, Number(dom.cleanMin.value));
   });
+});
+dom.undoAction.addEventListener("click", () => {
+  restoreHistory(state.undoStack, state.redoStack, "戻す履歴がありません");
+});
+dom.redoAction.addEventListener("click", () => {
+  restoreHistory(state.redoStack, state.undoStack, "進める履歴がありません");
 });
 dom.growMask.addEventListener("click", () => {
   mutateSelectedMask((instance) => {
@@ -621,7 +708,14 @@ dom.instanceList.addEventListener("change", (event) => {
   if (!instance) return;
   const action = event.target.dataset.action;
   if (action === "select") state.selectedId = instance.id;
-  if (action === "regional") instance.regionalColor = event.target.value;
+  if (action === "visibility" && instance.visible !== event.target.checked) {
+    pushAppHistory();
+    instance.visible = event.target.checked;
+  }
+  if (action === "regional" && instance.regionalColor !== event.target.value) {
+    pushAppHistory();
+    instance.regionalColor = event.target.value;
+  }
   renderList();
   redraw();
 });
@@ -633,14 +727,24 @@ dom.instanceList.addEventListener("click", (event) => {
   const instance = state.instances.find((item) => item.id === id);
   if (!instance) return;
   const action = button.dataset.action;
-  if (action === "visibility") instance.visible = !instance.visible;
   if (action === "delete") {
+    pushAppHistory();
     state.instances = state.instances.filter((item) => item.id !== id);
     if (state.selectedId === id) state.selectedId = state.instances[0]?.id || null;
   }
-  if (action === "up") moveInstance(id, -1);
-  if (action === "down") moveInstance(id, 1);
-  if (action === "rebox") instance.bbox = bboxFromMask(instance.mask, state.width, state.height);
+  if (action === "up" || action === "down") {
+    const delta = action === "up" ? -1 : 1;
+    const index = state.instances.findIndex((item) => item.id === id);
+    const next = index + delta;
+    if (index >= 0 && next >= 0 && next < state.instances.length) {
+      pushAppHistory();
+      moveInstance(id, delta);
+    }
+  }
+  if (action === "rebox") {
+    pushAppHistory();
+    instance.bbox = bboxFromMask(instance.mask, state.width, state.height);
+  }
   renderList();
   redraw();
 });
@@ -662,7 +766,8 @@ fetch("/api/status")
   .catch(() => setStatus("準備完了"));
 
 resizeCanvas();
-setOutputMode(state.outputMode);
+renderList();
+updateHistoryButtons();
 
 window.__maskImageDebug = {
   state,

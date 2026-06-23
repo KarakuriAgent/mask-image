@@ -5,6 +5,7 @@ import {
   decodeRle,
   encodeRle,
   hitTestInstances,
+  mergeDuplicateInstances,
   morphMask,
   rectMask,
   removeSmallComponents,
@@ -86,4 +87,37 @@ test("hit testing respects topmost visible instance", () => {
     4,
   );
   assert.equal(id, "top");
+});
+
+test("duplicate instance merging unions contained masks", () => {
+  const large = rectMask(6, 4, { x: 1, y: 0, width: 4, height: 4 });
+  const small = rectMask(6, 4, { x: 2, y: 1, width: 2, height: 2 });
+  const separate = rectMask(6, 4, { x: 5, y: 0, width: 1, height: 4 });
+  const merged = mergeDuplicateInstances(
+    [
+      { id: "det-1", mask: large, bbox: bboxFromMask(large, 6, 4), score: 0.6, visible: true, inpaintEnabled: true, regionalColor: "none" },
+      { id: "det-2", mask: small, bbox: bboxFromMask(small, 6, 4), score: 0.9, visible: true, inpaintEnabled: true, regionalColor: "none" },
+      { id: "det-3", mask: separate, bbox: bboxFromMask(separate, 6, 4), score: 0.7, visible: true, inpaintEnabled: true, regionalColor: "none" },
+    ],
+    6,
+    4,
+  );
+  assert.equal(merged.length, 2);
+  assert.equal(merged[0].score, 0.9);
+  assert.deepEqual(merged[0].bbox, { x: 1, y: 0, width: 4, height: 4 });
+  assert.equal(merged[0].mask.reduce((sum, value) => sum + value, 0), 16);
+});
+
+test("duplicate instance merging keeps low-overlap masks separate", () => {
+  const left = rectMask(8, 4, { x: 0, y: 0, width: 4, height: 4 });
+  const right = rectMask(8, 4, { x: 3, y: 0, width: 4, height: 4 });
+  const merged = mergeDuplicateInstances(
+    [
+      { id: "det-1", mask: left, bbox: bboxFromMask(left, 8, 4), score: 0.8 },
+      { id: "det-2", mask: right, bbox: bboxFromMask(right, 8, 4), score: 0.7 },
+    ],
+    8,
+    4,
+  );
+  assert.equal(merged.length, 2);
 });

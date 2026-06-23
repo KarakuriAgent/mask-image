@@ -100,6 +100,65 @@ export function mergeMasks(width, height, instances, predicate) {
   return out;
 }
 
+function maskOverlapStats(a, b) {
+  let areaA = 0;
+  let areaB = 0;
+  let intersection = 0;
+  for (let i = 0; i < a.length; i += 1) {
+    const hasA = a[i] === 1;
+    const hasB = b[i] === 1;
+    if (hasA) areaA += 1;
+    if (hasB) areaB += 1;
+    if (hasA && hasB) intersection += 1;
+  }
+  return { areaA, areaB, intersection };
+}
+
+function shouldMergeMasks(a, b, options = {}) {
+  const iouThreshold = options.iouThreshold ?? 0.45;
+  const containmentThreshold = options.containmentThreshold ?? 0.82;
+  const { areaA, areaB, intersection } = maskOverlapStats(a, b);
+  if (!areaA || !areaB || !intersection) return false;
+  const union = areaA + areaB - intersection;
+  const iou = intersection / union;
+  const containment = intersection / Math.min(areaA, areaB);
+  return iou >= iouThreshold || containment >= containmentThreshold;
+}
+
+function unionMasks(a, b) {
+  const out = new Uint8Array(a.length);
+  for (let i = 0; i < out.length; i += 1) {
+    out[i] = a[i] || b[i] ? 1 : 0;
+  }
+  return out;
+}
+
+function betterScore(a, b) {
+  if (a == null) return b;
+  if (b == null) return a;
+  return Math.max(a, b);
+}
+
+export function mergeDuplicateInstances(instances, width, height, options = {}) {
+  const merged = [];
+  for (const instance of instances) {
+    const match = merged.find((candidate) => shouldMergeMasks(candidate.mask, instance.mask, options));
+    if (!match) {
+      merged.push({ ...instance, mask: instance.mask.slice() });
+      continue;
+    }
+    match.mask = unionMasks(match.mask, instance.mask);
+    match.bbox = bboxFromMask(match.mask, width, height);
+    match.score = betterScore(match.score, instance.score);
+    match.visible = match.visible || instance.visible;
+    match.inpaintEnabled = match.inpaintEnabled || instance.inpaintEnabled;
+    if (match.regionalColor === "none" && instance.regionalColor !== "none") {
+      match.regionalColor = instance.regionalColor;
+    }
+  }
+  return merged;
+}
+
 export function paintCircle(mask, width, height, cx, cy, radius, value) {
   const r = Math.max(1, Math.floor(radius));
   const x1 = clamp(Math.floor(cx - r), 0, width - 1);

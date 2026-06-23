@@ -109,29 +109,18 @@ button:disabled {
   display: none;
 }
 
-.mode-switch {
-  min-height: 34px;
+.export-actions {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   border-left: 1px solid var(--line);
   padding-left: 12px;
 }
 
-.mode-label {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.mode-button {
-  min-width: 92px;
-}
-
-.mode-button.active {
+#export-regional-button {
   border-color: var(--accent);
-  color: var(--accent);
-  background: var(--accent-soft);
+  background: var(--accent);
+  color: #fff;
 }
 
 .status {
@@ -142,6 +131,17 @@ button:disabled {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.history-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.history-actions button {
+  min-width: 56px;
+  padding: 0 10px;
 }
 
 .workspace {
@@ -157,10 +157,6 @@ button:disabled {
   border-right: 1px solid var(--line);
   padding: 14px;
   overflow: auto;
-}
-
-body[data-output-mode="regional"] .inpaint-only {
-  display: none;
 }
 
 .right-panel {
@@ -234,14 +230,22 @@ output {
 
 .segmented {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(68px, 1fr));
   gap: 6px;
+}
+
+.main-tools {
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .tool-button.active {
   border-color: var(--accent);
   color: var(--accent);
   background: var(--accent-soft);
+}
+
+.full-width {
+  width: 100%;
 }
 
 .button-row {
@@ -251,14 +255,25 @@ output {
   margin-bottom: 14px;
 }
 
-.hint {
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.45;
+.advanced-settings,
+.instance-details {
   border: 1px solid var(--line);
   border-radius: 6px;
-  padding: 10px;
   background: #fafbfc;
+}
+
+.advanced-settings summary,
+.instance-details summary {
+  min-height: 36px;
+  padding: 8px 10px;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.advanced-content {
+  padding: 0 10px 10px;
 }
 
 .panel-title {
@@ -287,10 +302,15 @@ output {
   box-shadow: 0 0 0 2px var(--accent-soft);
 }
 
+.instance-card.muted {
+  opacity: 0.68;
+}
+
 .instance-head {
   display: flex;
   align-items: center;
   gap: 8px;
+  cursor: pointer;
 }
 
 .instance-name {
@@ -311,6 +331,8 @@ output {
   border: 1px solid var(--line);
   border-radius: 6px;
   background: #fafbfc;
+  display: grid;
+  gap: 0;
 }
 
 .instance-mode-row {
@@ -322,6 +344,14 @@ output {
   padding: 7px 8px;
   color: var(--text);
   font-size: 13px;
+}
+
+.instance-mode-row + .instance-mode-row {
+  border-top: 1px solid var(--line);
+}
+
+.instance-mode-row.compact {
+  grid-template-columns: 1fr auto;
 }
 
 .instance-mode-row.muted {
@@ -340,11 +370,18 @@ output {
 
 .instance-actions {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 6px;
+  padding: 0 8px 8px;
 }
 
-.instance-actions button {
+.instance-primary-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+}
+
+.instance-actions button,
+.instance-primary-actions button {
   padding: 0;
 }
 

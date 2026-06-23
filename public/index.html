@@ -16,37 +16,28 @@
         </label>
         <button id="detect-button" type="button">
           <span class="spinner" aria-hidden="true"></span>
-          <span class="detect-label">検出</span>
+          <span class="detect-label">人物を検出</span>
         </button>
-        <div class="mode-switch" role="group" aria-label="出力モード">
-          <span class="mode-label">出力モード</span>
-          <button class="mode-button active" type="button" data-output-mode="inpaint">インペイント</button>
-          <button class="mode-button" type="button" data-output-mode="regional">領域カラー</button>
+        <div class="export-actions">
+          <button id="export-regional-button" type="button">色分けマスクを書き出し</button>
+          <button id="export-button" type="button">インペイント用を書き出し</button>
         </div>
-        <button id="export-button" type="button">インペイントを書き出し</button>
         <span id="status" class="status">準備完了</span>
+        <div class="history-actions">
+          <button id="undo-action" type="button" disabled>戻る</button>
+          <button id="redo-action" type="button" disabled>進む</button>
+        </div>
       </header>
 
       <section class="workspace">
         <aside class="left-panel">
+          <div class="panel-title">マスク修正</div>
           <div class="control-group">
-            <label for="prompts">検出したい対象</label>
-            <textarea id="prompts" rows="3">アニメキャラクター . 人物 . 人体 . 全身</textarea>
-          </div>
-          <div class="grid-2">
-            <label>
-              検出のしきい値
-              <input id="threshold" type="range" min="0.05" max="0.95" step="0.05" value="0.30" />
-            </label>
-            <output id="threshold-value">0.30</output>
-          </div>
-          <div class="control-group">
-            <label>編集ツール</label>
-            <div class="segmented">
+            <label>操作</label>
+            <div class="segmented main-tools">
               <button class="tool-button active" type="button" data-tool="select">選択</button>
-              <button class="tool-button" type="button" data-tool="box">囲む</button>
               <button class="tool-button" type="button" data-tool="brush">塗る</button>
-              <button class="tool-button" type="button" data-tool="erase">消す</button>
+              <button class="tool-button" type="button" data-tool="erase">消去</button>
             </div>
           </div>
           <div class="grid-2">
@@ -56,28 +47,45 @@
             </label>
             <output id="brush-value">24</output>
           </div>
-          <div class="grid-2">
-            <label>
-              小さいゴミの除去
-              <input id="clean-min" type="number" min="1" max="1000000" step="10" value="160" />
-            </label>
-            <button id="clean-mask" type="button">除去</button>
-          </div>
-          <div class="button-row">
-            <button id="grow-mask" type="button">広げる</button>
-            <button id="shrink-mask" type="button">縮める</button>
-            <button id="clear-mask" type="button">空にする</button>
-          </div>
-          <div class="grid-2 inpaint-only">
-            <label>
-              インペイント境界ぼかし
-              <input id="feather" type="range" min="0" max="32" step="1" value="0" />
-            </label>
-            <output id="feather-value">0</output>
-          </div>
-          <div class="hint">
-            見落とされた人物は「囲む」で追加できます。選択中のマスクは「塗る」「消す」で手直しできます。
-          </div>
+          <details class="advanced-settings">
+            <summary>詳細設定</summary>
+            <div class="advanced-content">
+              <div class="control-group">
+                <label for="prompts">検出したい対象</label>
+                <textarea id="prompts" rows="3">アニメキャラクター . 人物 . 人体 . 全身</textarea>
+              </div>
+              <div class="grid-2">
+                <label>
+                  検出のしきい値
+                  <input id="threshold" type="range" min="0.05" max="0.95" step="0.05" value="0.30" />
+                </label>
+                <output id="threshold-value">0.30</output>
+              </div>
+              <div class="control-group">
+                <label>人物を追加</label>
+                <button class="tool-button full-width" type="button" data-tool="box">画像上で囲む</button>
+              </div>
+              <div class="grid-2">
+                <label>
+                  小さいゴミの除去
+                  <input id="clean-min" type="number" min="1" max="1000000" step="10" value="160" />
+                </label>
+                <button id="clean-mask" type="button">除去</button>
+              </div>
+              <div class="button-row">
+                <button id="grow-mask" type="button">広げる</button>
+                <button id="shrink-mask" type="button">縮める</button>
+                <button id="clear-mask" type="button">空にする</button>
+              </div>
+              <div class="grid-2 inpaint-only">
+                <label>
+                  インペイント境界ぼかし
+                  <input id="feather" type="range" min="0" max="32" step="1" value="0" />
+                </label>
+                <output id="feather-value">0</output>
+              </div>
+            </div>
+          </details>
         </aside>
 
         <section class="canvas-panel">
@@ -85,7 +93,7 @@
         </section>
 
         <aside class="right-panel">
-          <div class="panel-title">検出した領域</div>
+          <div class="panel-title">出力する人物</div>
           <div id="instance-list" class="instance-list"></div>
         </aside>
       </section>
