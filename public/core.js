@@ -11,6 +11,24 @@ export function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value));
 }
 
+export function scaledDimensionsForByteTarget(width, height, sourceBytes, targetBytes, options = {}) {
+  const safeWidth = Number.isFinite(width) && width > 0 ? Math.max(1, Math.floor(width)) : 1;
+  const safeHeight = Number.isFinite(height) && height > 0 ? Math.max(1, Math.floor(height)) : 1;
+  if (!Number.isFinite(sourceBytes) || !Number.isFinite(targetBytes) || sourceBytes <= 0 || targetBytes <= 0) {
+    return { width: safeWidth, height: safeHeight };
+  }
+  if (sourceBytes <= targetBytes) {
+    return { width: safeWidth, height: safeHeight };
+  }
+
+  const safetyFactor = Number.isFinite(options.safetyFactor) && options.safetyFactor > 0 ? options.safetyFactor : 0.92;
+  const scale = clamp(Math.sqrt(targetBytes / sourceBytes) * safetyFactor, 0, 1);
+  return {
+    width: Math.max(1, Math.floor(safeWidth * scale)),
+    height: Math.max(1, Math.floor(safeHeight * scale)),
+  };
+}
+
 export function normalizeBox(box, width, height) {
   const x1 = clamp(Math.floor(Math.min(box.x, box.x + box.width)), 0, width);
   const y1 = clamp(Math.floor(Math.min(box.y, box.y + box.height)), 0, height);

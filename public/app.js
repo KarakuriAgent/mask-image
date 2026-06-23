@@ -12,6 +12,7 @@ import {
   renderInpaintMaskAlpha,
   renderInpaintPixels,
   renderRegionalPixels,
+  scaledDimensionsForByteTarget,
 } from "./core.js";
 
 const dom = {
@@ -71,6 +72,10 @@ const defaultRegionalColors = ["red", "blue", "yellow"];
 const maxHistoryEntries = 40;
 const defaultMaskGrowthMin = 10;
 const defaultMaskGrowthMax = 28;
+const exportTargetBytes = 1_000_000;
+const exportResizeSafetyFactor = 0.92;
+const maxExportResizePasses = 6;
+const pngMimeType = "image/png";
 
 function setStatus(message) {
   dom.status.textContent = message;
@@ -700,21 +705,68 @@ function mutateSelectedMask(callback) {
   redraw();
 }
 
-function downloadCanvas(canvas, filename) {
-  canvas.toBlob((blob) => {
-    if (!blob) {
-      setStatus("PNGに変換できませんでした");
-      return;
-    }
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-  }, "image/png");
+function formatBytes(bytes) {
+  if (bytes >= 1_000_000) return `${(bytes / 1_000_000).toFixed(2)}MB`;
+  if (bytes >= 1_000) return `${Math.round(bytes / 1_000)}KB`;
+  return `${bytes}B`;
+}
+
+function canvasToPngBlob(canvas) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) {
+        resolve(blob);
+      } else {
+        reject(new Error("PNGに変換できませんでした"));
+      }
+    }, pngMimeType);
+  });
+}
+
+function resizeExportCanvas(source, width, height, smooth) {
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const outputCtx = canvas.getContext("2d");
+  outputCtx.imageSmoothingEnabled = smooth;
+  if (smooth) outputCtx.imageSmoothingQuality = "high";
+  outputCtx.drawImage(source, 0, 0, width, height);
+  return canvas;
+}
+
+async function pngBlobForTargetSize(canvas, options = {}) {
+  const smoothResize = options.smoothResize ?? true;
+  let width = canvas.width;
+  let height = canvas.height;
+  let blob = await canvasToPngBlob(canvas);
+  let resized = false;
+
+  for (let pass = 0; blob.size > exportTargetBytes && pass < maxExportResizePasses; pass += 1) {
+    const next = scaledDimensionsForByteTarget(width, height, blob.size, exportTargetBytes, {
+      safetyFactor: exportResizeSafetyFactor,
+    });
+    if (next.width === width && next.height === height) break;
+    width = next.width;
+    height = next.height;
+    const resizedCanvas = resizeExportCanvas(canvas, width, height, smoothResize);
+    blob = await canvasToPngBlob(resizedCanvas);
+    resized = true;
+  }
+
+  return { blob, width, height, resized };
+}
+
+async function downloadCanvas(canvas, filename, options = {}) {
+  const result = await pngBlobForTargetSize(canvas, options);
+  const url = URL.createObjectURL(result.blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  return result;
 }
 
 function makeOutputCanvas() {
@@ -748,7 +800,7 @@ function featherMaskAlpha(maskAlpha, feather) {
   return out;
 }
 
-function exportInpaintMask() {
+async function exportInpaintMask() {
   if (!state.image) {
     setStatus("先に画像を開いてください");
     return;
@@ -771,11 +823,12 @@ function exportInpaintMask() {
     const pixels = applyInpaintMaskAlpha(basePixels, featherMaskAlpha(maskAlpha, feather));
     outputCtx.putImageData(new ImageData(pixels, state.width, state.height), 0, 0);
   }
-  downloadCanvas(canvas, "inpaint-mask.png");
-  setStatus("アルファ付きインペイントPNGを書き出しました");
+  const output = await downloadCanvas(canvas, "inpaint-mask.png", { smoothResize: true });
+  const resizeLabel = output.resized ? `${output.width}x${output.height}に調整し、` : "";
+  setStatus(`アルファ付きインペイントPNGを${resizeLabel}${formatBytes(output.blob.size)}で書き出しました`);
 }
 
-function exportRegionalMask() {
+async function exportRegionalMask() {
   if (!state.image) {
     setStatus("先に画像を開いてください");
     return;
@@ -788,8 +841,9 @@ function exportRegionalMask() {
   const outputCtx = canvas.getContext("2d");
   const pixels = renderRegionalPixels(state.width, state.height, state.instances);
   outputCtx.putImageData(new ImageData(pixels, state.width, state.height), 0, 0);
-  downloadCanvas(canvas, "regional-controlnet-mask.png");
-  setStatus("領域カラー画像を書き出しました");
+  const output = await downloadCanvas(canvas, "regional-controlnet-mask.png", { smoothResize: false });
+  const resizeLabel = output.resized ? `${output.width}x${output.height}に調整し、` : "";
+  setStatus(`領域カラー画像を${resizeLabel}${formatBytes(output.blob.size)}で書き出しました`);
 }
 
 function setTool(tool) {
@@ -932,8 +986,18 @@ dom.fileInput.addEventListener("change", (event) => {
   });
 });
 dom.detectButton.addEventListener("click", detect);
-dom.exportButton.addEventListener("click", exportInpaintMask);
-dom.exportRegionalButton.addEventListener("click", exportRegionalMask);
+dom.exportButton.addEventListener("click", () => {
+  exportInpaintMask().catch((error) => {
+    console.error(error);
+    setStatus(error.message || "インペイントPNGの書き出しに失敗しました");
+  });
+});
+dom.exportRegionalButton.addEventListener("click", () => {
+  exportRegionalMask().catch((error) => {
+    console.error(error);
+    setStatus(error.message || "領域カラー画像の書き出しに失敗しました");
+  });
+});
 dom.threshold.addEventListener("input", () => {
   dom.thresholdValue.value = Number(dom.threshold.value).toFixed(2);
 });

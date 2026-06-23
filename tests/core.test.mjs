@@ -13,6 +13,7 @@ import {
   renderInpaintMaskAlpha,
   renderInpaintPixels,
   renderRegionalPixels,
+  scaledDimensionsForByteTarget,
 } from "../public/core.js";
 
 test("RLE round-trips a sparse mask", () => {
@@ -25,6 +26,17 @@ test("rectangle mask and bbox use image coordinates", () => {
   const mask = rectMask(5, 4, { x: 1, y: 1, width: 3, height: 2 });
   assert.equal(mask.reduce((sum, value) => sum + value, 0), 6);
   assert.deepEqual(bboxFromMask(mask, 5, 4), { x: 1, y: 1, width: 3, height: 2 });
+});
+
+test("export byte target scaling preserves aspect ratio", () => {
+  assert.deepEqual(
+    scaledDimensionsForByteTarget(4000, 3000, 4_000_000, 1_000_000, { safetyFactor: 1 }),
+    { width: 2000, height: 1500 },
+  );
+  assert.deepEqual(
+    scaledDimensionsForByteTarget(4000, 3000, 900_000, 1_000_000),
+    { width: 4000, height: 3000 },
+  );
 });
 
 test("regional rendering uses white background and pure colors", () => {
