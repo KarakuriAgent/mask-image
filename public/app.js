@@ -180,10 +180,12 @@ function inpaintRenderInstances() {
 
 function canvasPoint(event) {
   const rect = dom.canvas.getBoundingClientRect();
-  const cssX = event.clientX - rect.left;
-  const cssY = event.clientY - rect.top;
-  const x = (cssX - state.view.x) / state.view.scale;
-  const y = (cssY - state.view.y) / state.view.scale;
+  const scaleX = dom.canvas.width / rect.width;
+  const scaleY = dom.canvas.height / rect.height;
+  const canvasX = (event.clientX - rect.left) * scaleX;
+  const canvasY = (event.clientY - rect.top) * scaleY;
+  const x = (canvasX - state.view.x) / state.view.scale;
+  const y = (canvasY - state.view.y) / state.view.scale;
   return {
     x: Math.max(0, Math.min(state.width - 1, x)),
     y: Math.max(0, Math.min(state.height - 1, y)),
@@ -588,7 +590,10 @@ function setTool(tool) {
 
 function onPointerDown(event) {
   if (!state.image) return;
-  dom.canvas.setPointerCapture(event.pointerId);
+  event.preventDefault();
+  if (dom.canvas.setPointerCapture) {
+    dom.canvas.setPointerCapture(event.pointerId);
+  }
   state.pointerDown = true;
   const point = canvasPoint(event);
   if (state.tool === "select") {
@@ -612,6 +617,7 @@ function onPointerDown(event) {
 
 function onPointerMove(event) {
   if (!state.pointerDown || !state.image) return;
+  event.preventDefault();
   const point = canvasPoint(event);
   if (state.tool === "box") {
     state.boxCurrent = point;
@@ -629,6 +635,7 @@ function onPointerMove(event) {
 
 function onPointerUp(event) {
   if (!state.pointerDown) return;
+  event.preventDefault();
   state.pointerDown = false;
   if (state.tool === "box" && state.boxStart && state.boxCurrent) {
     const box = {
@@ -642,7 +649,9 @@ function onPointerUp(event) {
     redraw();
     segmentBox(box);
   }
-  dom.canvas.releasePointerCapture(event.pointerId);
+  if (dom.canvas.releasePointerCapture && dom.canvas.hasPointerCapture?.(event.pointerId)) {
+    dom.canvas.releasePointerCapture(event.pointerId);
+  }
 }
 
 function moveInstance(id, delta) {
